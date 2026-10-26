@@ -188,25 +188,55 @@
     });
     return result;
   }
-  function loadLrBelumSettle(content) {
-    const result = new Map();
+  // Transaksi LR / RP belum settle. Baris 0|Kode|SID|No Trx|tgl|tgl|tgl|Nilai, diikuti baris saham 1|No Trx|Saham|Volume.
+  // → Map sid → { value: total nilai, stocks: {saham: volume} }
+  function loadSettleTrx(content) {
+    const result = new Map(); const trxSid = new Map();
+    const get = (sid) => { if (!result.has(sid)) result.set(sid, { value: 0, stocks: dict() }); return result.get(sid); };
     for (let line of splitLines(content)) {
       line = line.trim(); if (!line) continue;
       const p = line.split('|');
-      if (p[0] !== '0' || p.length < 8) continue;
-      const sid = p[2].trim();
-      result.set(sid, (result.get(sid) || 0) + f0(p[p.length - 1]));
+      if (p[0] === '0' && p.length >= 8) {
+        const sid = p[2].trim(); trxSid.set(p[3].trim(), sid);
+        get(sid).value += f0(p[p.length - 1]);
+      } else if (p[0] === '1' && p.length >= 4) {
+        const sid = trxSid.get(p[1].trim()); const stock = p[2].trim().toUpperCase(); const vol = f0(p[3]);
+        if (sid && stock && vol > 0) { const s = get(sid).stocks; s[stock] = (s[stock] || 0) + vol; }
+      }
     }
     return result;
   }
+  const loadLrBelumSettle = loadSettleTrx;
+  const loadRpBelumSettle = loadSettleTrx;
   function cloneOp(op) {
     const out = new Map();
     for (const [sid, d] of op) out.set(sid, Object.assign({}, d, { stocks: copyDict(d.stocks) }));
     return out;
   }
+  function addStocks(stocks, delta, sign) {
+    for (const stock of Object.keys(delta)) {
+      const nq = (stocks[stock] || 0) + sign * delta[stock];
+      if (nq <= 0) delete stocks[stock]; else stocks[stock] = nq;
+    }
+  }
+  // LR belum settle: Loan Existing bertambah, saham yang dibeli masuk OP
   function applyLrAdjustmentToOp(op, lr) {
     const out = cloneOp(op);
-    for (const [sid, v] of lr) if (out.has(sid)) out.get(sid).loan_existing += v;
+    for (const [sid, v] of lr) {
+      if (!out.has(sid)) continue; const d = out.get(sid);
+      d.loan_existing += v.value; addStocks(d.stocks, v.stocks, 1);
+    }
+    return out;
+  }
+  // RP belum settle: membayar Accrued dulu, sisanya Loan Existing; saham yang dijual keluar dari OP
+  function applyRpAdjustmentToOp(op, rp) {
+    const out = cloneOp(op);
+    for (const [sid, v] of rp) {
+      if (!out.has(sid)) continue; const d = out.get(sid);
+      const paid = Math.max(v.value, 0); const toAccrued = Math.min(paid, d.accrued_interest);
+      d.accrued_interest -= toAccrued; d.loan_existing = Math.max(d.loan_existing - (paid - toAccrued), 0);
+      addStocks(d.stocks, v.stocks, -1);
+    }
     return out;
   }
   function applyPositionAdjustmentToOp(op, pos) {
@@ -298,18 +328,21 @@
     const cp = loadClosingPrice(inputs.closingRows);
     const risk = loadRiskParameter(inputs.riskText);
     const opRaw = parseOpFile(inputs.opText);
-    let op = opRaw; let pos = new Map(), lrs = new Map();
+    let op = opRaw; let pos = new Map(), lrs = new Map(), rps = new Map();
     if (inputs.posText) { pos = loadParticipantStockPosition(inputs.posText); op = applyPositionAdjustmentToOp(op, pos); }
     if (inputs.lrSettleText) { lrs = loadLrBelumSettle(inputs.lrSettleText); op = applyLrAdjustmentToOp(op, lrs); }
+    if (inputs.rpSettleText) { rps = loadRpBelumSettle(inputs.rpSettleText); op = applyRpAdjustmentToOp(op, rps); }
+    // SID di berkas LR/RP belum settle yang tidak ada di OP → tidak bisa dikoreksi
+    const settleMissing = { lr: [...lrs.keys()].filter((s) => !opRaw.has(s)).sort(), rp: [...rps.keys()].filter((s) => !opRaw.has(s)).sort() };
     const net = parseNettingInvoice(inputs.nettingRows);
     const { netBuy, netSell } = splitNetting(net.netting, cp);
     const cl = parseCreditLimitFile(inputs.clText);
     const sc = parseSidClient(inputs.sidClientRows);
     return {
-      cp, hc: risk.hc, avq: risk.avq, opRaw, op, pos, lrs, netting: net.netting, trace: net.trace,
+      cp, hc: risk.hc, avq: risk.avq, opRaw, op, pos, lrs, rps, settleMissing, netting: net.netting, trace: net.trace,
       cidToSidInvoice: net.cidToSid, sidToNameInvoice: net.sidToName, netBuy, netSell,
       cl: cl.data, clValueDate: cl.valueDate, brokerCodes: brokerCodesOf(cl.brokers, opRaw.brokers || new Set()),
-      sidToCid: sc.sidToCid, cidToName: sc.cidToName, peiSids: sc.peiSids, sidDupes: sc.sidDupes, hasPos: !!inputs.posText,
+      sidToCid: sc.sidToCid, cidToName: sc.cidToName, peiSids: sc.peiSids, sidDupes: sc.sidDupes, hasPos: !!inputs.posText, hasLrSettle: !!inputs.lrSettleText, hasRpSettle: !!inputs.rpSettleText,
       hasilBuyRows: inputs.hasilBuyRows || null, // Map sid → array of arrays (sheet LR versi partisipan, ≥14 kolom), opsional
     };
   }
@@ -714,7 +747,8 @@
     ['netting', /(list\s*(of\s*)?invoice|netting)/i, ['.csv', '.xls', '.xlsx']],
     ['cl', /credit\s*limit/i, ['.txt']],
     ['sidclient', /sid\s*client/i, ['.xlsx']],
-    ['pos', /stock\s*position/i, ['.txt']], // opsional, tapi ikut dideteksi otomatis (v5)
+    ['lrsettle', /^lr[\s_\-]?\d{8}/i, ['.txt']], // opsional: LR_YYYYMMDD_*.txt
+    ['rpsettle', /^rp[\s_\-]?\d{8}/i, ['.txt']], // opsional: RP_YYYYMMDD_*.txt
   ];
   function detectSlot(filename) {
     const name = String(filename || '').split(/[\\/]/).pop();
@@ -735,8 +769,8 @@
     detectSlot, matchFolderFiles, RATIO_THRESHOLD, AUTO_ADJUST_TARGET, LR3, LR4, brokerCodesOf, parseRupiah, toInt,
     cloneState, readFinalColumn, applyFinals, parseHasilTrx, applyHasilTrx, cancelAutoAdjust, stateSig, statusRp, statusLr,
     pyFloat, findAndRename, calcCollateral, solveRpMin, solveRpMax, solveLr, getLoanStatus, fmtRp, fmtPct,
-    loadClosingPrice, loadRiskParameter, parseOpFile, parseCreditLimitFile, loadParticipantStockPosition, loadLrBelumSettle,
-    applyLrAdjustmentToOp, applyPositionAdjustmentToOp, parseNettingInvoice, splitNetting, parseSidClient, buildContext,
+    loadClosingPrice, loadRiskParameter, parseOpFile, parseCreditLimitFile, loadParticipantStockPosition, loadLrBelumSettle, loadRpBelumSettle, loadSettleTrx,
+    applyLrAdjustmentToOp, applyRpAdjustmentToOp, applyPositionAdjustmentToOp, parseNettingInvoice, splitNetting, parseSidClient, buildContext,
     computeSid, lolosRp, lolosLr, newState, setOverride, optsFor, runPei, runValidasi, globalResult, applyAutoAdjust,
     ifastRepayment, ifastLoan, hasilTrxPei, toCsv, resolveSid, diagnoseSid,
   };

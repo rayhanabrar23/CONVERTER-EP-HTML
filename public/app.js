@@ -26,8 +26,8 @@
     { id: 'netting', label: '4. List of Invoice', acc: '.csv,.xls,.xlsx', req: 1, kind: 'rows' },
     { id: 'cl', label: '5. Credit Limit', acc: '.txt', req: 1, kind: 'text' },
     { id: 'sidclient', label: '6. SID Client (daftar nasabah PEI)', acc: '.xlsx', req: 1, kind: 'rows' },
-    { id: 'pos', label: '7. Participant Stock Position', acc: '.txt', kind: 'text', hint: 'opsional — koreksi OP T+2 belum settle' },
-    { id: 'lrsettle', label: '8. Data Transaksi LR', acc: '.txt', kind: 'text', hint: 'opsional — koreksi Loan Existing belum settle' },
+    { id: 'lrsettle', label: '7. Data Transaksi LR', acc: '.txt', kind: 'text', hint: 'opsional — LR belum settle: menambah Loan Existing & saham di OP' },
+    { id: 'rpsettle', label: '8. Data Transaksi RP', acc: '.txt', kind: 'text', hint: 'opsional — RP belum settle: mengurangi Accrued lalu Loan Existing, saham keluar dari OP' },
   ];
   const S = { user: 'Lokal', role: 'PEI', files: {}, ctx: null, st: C.newState(), pei: null, vres: null, tab: 'upload', msg: null, sent: 0, rpSaved: false, rpUnlocked: false, rpFile: null, hasilSaved: false, hasil: null, valRun: false, warn: [], hasilSig: null,
     code: CFG.participantCode || store.get('code') || '', codeAuto: false, clp: (() => { const v = store.get('clp'); return v != null && v !== '' ? Number(v) : CFG.clPartisipan; })(), idMsg: null };
@@ -66,10 +66,10 @@
     const miss = SLOTS.filter((x) => x.req && !S.files[x.id]).map((x) => x.label.replace(/^\d+\.\s*/, '').replace(/ \(.*\)$/, ''));
     const dup = Object.keys(dupes).map((id) => SLOTS.find((x) => x.id === id).label.replace(/^\d+\.\s*/, '').replace(/ \(.*\)$/, '') + ` (${dupes[id]} berkas, dipakai yang terbaru: ${picked[id].name})`);
     const found = Object.keys(picked).filter((id) => SLOTS.find((x) => x.id === id).req).length;
-    const posNote = picked.pos ? ` Participant Stock Position ikut terdeteksi: ${picked.pos.name}.` : (S.files.pos ? '' : ' ⚠️ Participant Stock Position (StockPosition_*.txt) tidak ada di folder — saham T+2 yang belum settle tidak akan dihitung.');
+    const optNote = SLOTS.filter((x) => !x.req && picked[x.id]).map((x) => ` ${x.label.replace(/^\d+\.\s*/, '')} ikut terdeteksi: ${picked[x.id].name}.`).join('');
     S.msg = errs.length ? { er: 1, t: 'Ada berkas yang gagal dibaca. ' + errs.join(' | ') }
       : !found ? { er: 1, t: `Tidak ada berkas wajib yang dikenali dari ${files.length} berkas. Pastikan nama berkas memuat: Closing Price, RiskParameter, OP_, List Invoice, CreditLimit, SID Client.` }
-      : { t: `${found} dari 6 berkas wajib terdeteksi otomatis.` + (miss.length ? ` Belum ada: ${miss.join(', ')}.` : '') + (dup.length ? ` Catatan duplikat: ${dup.join('; ')}.` : '') + posNote, wr: !picked.pos && !S.files.pos };
+      : { t: `${found} dari 6 berkas wajib terdeteksi otomatis.` + (miss.length ? ` Belum ada: ${miss.join(', ')}.` : '') + (dup.length ? ` Catatan duplikat: ${dup.join('; ')}.` : '') + optNote };
     S.ignored = ignored; render();
   }
   // drag-drop: dukung folder (baca isi satu level) maupun berkas
@@ -185,13 +185,15 @@
   function run() {
     try {
       const f = (id) => S.files[id] && S.files[id].data;
-      const ctx = C.buildContext({ closingRows: f('closing'), riskText: f('risk'), opText: f('op'), nettingRows: f('netting'), clText: f('cl'), sidClientRows: f('sidclient'), posText: f('pos'), lrSettleText: f('lrsettle'), hasilBuyRows: f('hasil') });
+      const ctx = C.buildContext({ closingRows: f('closing'), riskText: f('risk'), opText: f('op'), nettingRows: f('netting'), clText: f('cl'), sidClientRows: f('sidclient'), lrSettleText: f('lrsettle'), rpSettleText: f('rpsettle'), hasilBuyRows: f('hasil') });
       resolveCode(ctx.brokerCodes); S.ctx = ctx;
       S.st = C.newState(); S.sent = 0; S.rpSaved = S.rpUnlocked = S.hasilSaved = S.valRun = false; S.rpFile = null; S.hasil = null; recompute(); S.tab = 'rp';
       const vd = S.ctx.clValueDate, td = new Date().toISOString().slice(0, 10).replace(/-/g, '/');
       S.msg = { t: `✅ File bersama dimuat — ${S.ctx.op.size} SID di OP, ${S.ctx.cp.size} harga saham, ${S.ctx.netting.size} SID di Netting, ${S.ctx.cl.size} di Credit Limit, ${S.ctx.peiSids.size} nasabah PEI. Kode Partisipan: ${S.code}${S.codeAuto ? ' (dari berkas)' : ''}.` + (vd && vd !== td ? ` ⚠️ Value Date Credit Limit ${vd} ≠ hari ini ${td}.` : '') };
       S.warn = [];
-      if (!S.ctx.hasPos) S.warn.push('Participant Stock Position tidak diunggah → saham yang belum settle (T+2) tidak ikut di OP. RP (saham keluar), collateral, dan LR bisa salah. Unggah StockPosition_*.txt lalu Jalankan Proses lagi.');
+      const noSettle = [!S.ctx.hasLrSettle && 'Data Transaksi LR', !S.ctx.hasRpSettle && 'Data Transaksi RP'].filter(Boolean);
+      if (noSettle.length) S.warn.push(`${noSettle.join(' & ')} tidak diunggah → LR/RP yang belum settle tidak ikut mengoreksi Loan Existing, Accrued, dan saham di OP. Abaikan bila hari ini memang tidak ada transaksi yang belum settle.`);
+      for (const [k, label] of [['lr', 'Data Transaksi LR'], ['rp', 'Data Transaksi RP']]) if (S.ctx.settleMissing[k].length) S.warn.push(`SID di ${label} yang tidak ada di OP (tidak ikut dikoreksi): ${S.ctx.settleMissing[k].join(', ')}.`);
       for (const x of S.ctx.sidDupes.filter((y) => y.conflict)) S.warn.push(`SID ganda di SID Client dengan CID berbeda: ${x.sid} → ${x.rows.map((r) => r.cid + ' ' + r.name).join(' | ')}. Yang dipakai CID ${x.used}. Perbaiki file SID Client.`);
       const plain = S.ctx.sidDupes.filter((y) => !y.conflict); if (plain.length) S.warn.push(`SID dobel (isi sama) di SID Client: ${plain.map((x) => x.sid + ' ×' + x.rows.length).join(', ')}.`);
     } catch (e) { S.ctx = null; S.msg = { er: 1, t: 'Gagal memproses: ' + e.message }; S.tab = 'upload'; }

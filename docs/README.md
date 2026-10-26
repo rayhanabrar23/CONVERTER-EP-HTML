@@ -18,7 +18,7 @@ tests/     tes perilaku, tes perbaikan, tes UI, tes pembanding vs Python asli (c
 > Tanpa login, siapa pun yang tahu alamatnya bisa membuka aplikasinya. Data tetap aman karena tidak diunggah, tetapi untuk hosting internal sebaiknya batasi akses (mis. Cloudflare Access) atau pakai lokal saja.
 
 ## Alur 4 langkah (berurutan, langkah berikutnya terkunci sampai langkah sebelumnya selesai)
-1. **Upload** — 6 berkas wajib (bisa per folder) + berkas opsional (Participant Stock Position, Data Transaksi LR), lalu cek **Identitas partisipan** (Kode Partisipan & Credit Limit Partisipan). Klik *Jalankan Proses*.
+1. **Upload** — 6 berkas wajib (bisa per folder) + berkas opsional (Data Transaksi LR, Data Transaksi RP), lalu cek **Identitas partisipan** (Kode Partisipan & Credit Limit Partisipan). Klik *Jalankan Proses*.
 2. **RP** — tabel nasabah PEI dengan transaksi Sell. RP Final default = RP Max; ubah bila perlu. Unduh `RP_Final_YYYYMMDD.xlsx`.
 3. **LR** — unggah file RP Final dari langkah 2. LR dihitung ulang dari RP Final itu (nasabah yang tidak ada di file dianggap RP Final = 0). LR Final bisa diedit atau di-*Auto-Adjust* bila Nilai Beli melebihi kapasitas. Klik *Final & Unduh* untuk membuat `Hasil_TRX_PEI.xlsx` (opsional: `LR_Final_YYYYMMDD.xlsx`).
 4. **Validasi & Export** — unggah `Hasil_TRX_PEI.xlsx`, jalankan validasi, Auto-Adjust bila perlu, lalu unduh file iFast (Repayment Proceed dan Loan Request).
@@ -49,7 +49,14 @@ Kumpulkan berkas harian dalam satu folder, lalu klik **Pilih Folder** (atau sere
 | Credit Limit | `CreditLimit` | .txt |
 | SID Client | `SID Client` | .xlsx |
 
-Jika ada lebih dari satu berkas yang cocok, dipakai yang terbaru (tanggal modifikasi). **Participant Stock Position** (nama memuat `StockPosition`) juga dideteksi otomatis; bila tidak ada, aplikasi memberi peringatan. Data Transaksi LR tetap diunggah manual. Pola nama ada di `SLOT_PATTERNS` pada `core.js`.
+Jika ada lebih dari satu berkas yang cocok, dipakai yang terbaru (tanggal modifikasi). **Data Transaksi LR** (`LR_YYYYMMDD*.txt`) dan **Data Transaksi RP** (`RP_YYYYMMDD*.txt`) juga dideteksi otomatis; bila tidak diunggah, aplikasi memberi peringatan. Pola nama ada di `SLOT_PATTERNS` pada `core.js`.
+
+## Koreksi OP dari transaksi yang belum settle
+Kedua berkas berformat sama: baris `0|Kode|SID|No Transaksi|tgl|tgl|tgl|Nilai` diikuti baris saham `1|No Transaksi|Saham|Volume`. Hanya SID yang ada di OP yang dikoreksi (SID lain dicantumkan di peringatan).
+- **Data Transaksi LR** (LR belum settle): Nilai **menambah** Loan Existing; saham di baris `1|` **masuk** ke OP.
+- **Data Transaksi RP** (RP belum settle): Nilai membayar **Accrued Interest dulu, sisanya Loan Existing** (tidak bisa minus); saham di baris `1|` **keluar** dari OP.
+
+Participant Stock Position tidak dipakai lagi — perubahan saham sudah tercatat di baris `1|` kedua berkas di atas.
 
 ## Menjalankan tes
 ```
@@ -84,6 +91,11 @@ python3 tests/ref_python.py && npm run test:python
 - **Status Auto-Adjust ikut terbawa** saat Hasil_TRX_PEI diunggah (termasuk sesi baru). Ya→Tidak di Excel membatalkannya.
 - **Pembatalan Auto-Adjust tercatat** (`BATAL AUTO-ADJUST`); tombol Batalkan juga di Langkah 4.
 - Tab **Audit** menjadi **Catatan**; unduhan `Catatan PEI YYYYMMDD.csv`.
+
+### v5.3
+- **Data Transaksi RP** (RP belum settle) baru: mengurangi Accrued lalu Loan Existing, saham yang dijual keluar dari OP.
+- **Data Transaksi LR** kini juga membaca baris saham `1|` → saham yang dibeli masuk ke OP.
+- Participant Stock Position dihapus dari aplikasi (diganti kedua berkas di atas).
 
 ### v5.2 (2026-10-18)
 - Dua versi dari satu kode: versi khusus satu partisipan (kode dikunci) dan **versi umum**. Perbedaannya hanya `public/config.js`.

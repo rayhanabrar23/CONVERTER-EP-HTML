@@ -12,7 +12,7 @@ async function boot(role) {
   return { w, d: w.document, calls };
 }
 async function upload(w, d, over = {}) {
-  const map = { '1. Closing Price': 'closing.xlsx', '2. Risk Parameter': 'risk.txt', '3. Outstanding Position': 'op.txt', '4. List of Invoice': 'netting.csv', '5. Credit Limit': 'cl.txt', '6. SID Client (daftar nasabah PEI)': 'sidclient.xlsx', '7. Participant Stock Position': 'pos.txt', '8. Data Transaksi LR': 'lrsettle.txt' };
+  const map = { '1. Closing Price': 'closing.xlsx', '2. Risk Parameter': 'risk.txt', '3. Outstanding Position': 'op.txt', '4. List of Invoice': 'netting.csv', '5. Credit Limit': 'cl.txt', '6. SID Client (daftar nasabah PEI)': 'sidclient.xlsx', '7. Data Transaksi LR': 'lrsettle_full.txt', '8. Data Transaksi RP': 'rpsettle.txt' };
   for (const [label, file] of Object.entries(map)) {
     const inp = d.querySelector(`input[type=file][aria-label="${label}"]`); assert.ok(inp, label);
     Object.defineProperty(inp, 'files', { value: [new w.File([over[file] || fs.readFileSync(D + '/' + file)], file)], configurable: true });

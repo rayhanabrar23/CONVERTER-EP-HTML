@@ -12,10 +12,10 @@ async function boot() {
   return { w, d: w.document, calls };
 }
 const NAMES = { 'closing price 121026.xlsx': 'closing.xlsx', 'RiskParameter_20261013.txt': 'risk.txt', 'OP_20261013_ZZ.txt': 'op.txt', 'list invoice 121026.csv': 'netting.csv',
-  'CreditLimit_20261013_ZZ.txt': 'cl.txt', 'SID Client.xlsx': 'sidclient.xlsx', 'StockPosition_20261013.txt': 'pos.txt' };
-async function folder(f, { noPos, over = {} } = {}) {
+  'CreditLimit_20261013_ZZ.txt': 'cl.txt', 'SID Client.xlsx': 'sidclient.xlsx', 'LR_20261013_ZZ.txt': 'lrsettle_full.txt', 'RP_20261013_ZZ.txt': 'rpsettle.txt' };
+async function folder(f, { noSettle, over = {} } = {}) {
   const inp = f.d.querySelector('input[aria-label="Pilih beberapa berkas"]');
-  const files = Object.entries(NAMES).filter(([n]) => !(noPos && /StockPosition/.test(n))).map(([n, src]) => new f.w.File([over[src] || fs.readFileSync(D + '/' + src)], n));
+  const files = Object.entries(NAMES).filter(([n]) => !(noSettle && /^(LR|RP)_\d/.test(n))).map(([n, src]) => new f.w.File([over[src] || fs.readFileSync(D + '/' + src)], n));
   Object.defineProperty(inp, 'files', { value: files, configurable: true }); inp.dispatchEvent(new f.w.Event('change')); await wait(400);
   const cl = f.d.querySelector('input[aria-label="Credit Limit Partisipan"]'); if (cl && !cl.value) { cl.value = '160.000.000.000'; cl.dispatchEvent(new f.w.Event('change')); await wait(); }
 }
@@ -27,15 +27,15 @@ const typeIn = async (w, inp, v) => { inp.value = v; inp.dispatchEvent(new w.Eve
 // SID yang lolos semua check LR (mis. LR-1 Available Qty) di data sintetis — dihitung langsung dari core
 const OK_LR = (() => { const C = require('../public/core.js'), XL = require('xlsx'); const xr = (f) => { const wb = XL.readFile(D + '/' + f); return XL.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]); };
   const tx = (f) => fs.readFileSync(D + '/' + f, 'utf8');
-  const ctx = C.buildContext({ closingRows: xr('closing.xlsx'), riskText: tx('risk.txt'), opText: tx('op.txt'), nettingRows: xr('netting.xlsx'), clText: tx('cl.txt'), sidClientRows: xr('sidclient.xlsx'), posText: tx('pos.txt') });
+  const ctx = C.buildContext({ closingRows: xr('closing.xlsx'), riskText: tx('risk.txt'), opText: tx('op.txt'), nettingRows: xr('netting.xlsx'), clText: tx('cl.txt'), sidClientRows: xr('sidclient.xlsx'), lrSettleText: tx('lrsettle_full.txt'), rpSettleText: tx('rpsettle.txt') });
   return new Set([...C.runValidasi(ctx, C.newState())].filter(([, x]) => x.is_pei && C.lolosLr(x) && x.lr_final > 1000).map(([k]) => k)); })();
 let n = 0; const t = async (name, fn) => { await fn(); n++; console.log('  ✓', name); };
 
 (async () => {
   const f = await boot(); const { w, d, calls } = f;
-  await t('#6 folder: StockPosition ikut terdeteksi otomatis', async () => {
-    await folder(f); assert.match(main(d), /Participant Stock Position ikut terdeteksi: StockPosition_20261013\.txt/);
-    btn(d, 'Proses').click(); await wait(200); assert.doesNotMatch(main(d), /Participant Stock Position tidak diunggah/);
+  await t('#6 folder: Data Transaksi LR/RP ikut terdeteksi otomatis', async () => {
+    await folder(f); assert.match(main(d), /Data Transaksi LR ikut terdeteksi: LR_20261013_ZZ\.txt/); assert.match(main(d), /Data Transaksi RP ikut terdeteksi: RP_20261013_ZZ\.txt/);
+    btn(d, 'Proses').click(); await wait(200); assert.doesNotMatch(main(d), /tidak diunggah/);
   });
   const rpIn = () => d.querySelector('input.cell[aria-label^="RP Final"]');
   await t('#2/#3 RP Final: desimal ditolak, melebihi RP Max ditolak, format 1.234.567 diterima', async () => {
@@ -103,14 +103,13 @@ let n = 0; const t = async (name, fn) => { await fn(); n++; console.log('  ✓',
     await (async () => { [...d.querySelectorAll('#tabs button')].find((x) => x.textContent.includes('3. LR')).click(); await wait(); })();
     const cells = [...d.querySelectorAll('input.cell')]; assert.ok(cells.length); assert.ok(cells.every((i) => /^\d+$/.test(i.value)));
   });
-  await t('#6/#7 tanpa StockPosition & dengan SID ganda → peringatan tampil di langkah RP', async () => {
+  await t('#6/#7 tanpa Data Transaksi LR/RP & dengan SID ganda → peringatan tampil di langkah RP', async () => {
     const g = await boot(); const X = require('xlsx'); const w0 = X.readFile(D + '/sidclient.xlsx'); const sc = X.utils.sheet_to_json(w0.Sheets[w0.SheetNames[0]]);
     sc.push(Object.assign({}, sc[0], { no_cust: 'C99999', Name: 'ORANG LAIN' }));
     const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, X.utils.json_to_sheet(sc), 'Sheet1');
-    await folder(g, { noPos: true, over: { 'sidclient.xlsx': X.write(wb, { type: 'buffer', bookType: 'xlsx' }) } });
-    assert.match(main(g.d), /Participant Stock Position \(StockPosition_\*\.txt\) tidak ada di folder/);
+    await folder(g, { noSettle: true, over: { 'sidclient.xlsx': X.write(wb, { type: 'buffer', bookType: 'xlsx' }) } });
     btn(g.d, 'Proses').click(); await wait(200);
-    assert.match(main(g.d), /Participant Stock Position tidak diunggah/); assert.match(main(g.d), new RegExp(`SID ganda di SID Client dengan CID berbeda: ${sc[0].SID}`));
+    assert.match(main(g.d), /Data Transaksi LR & Data Transaksi RP tidak diunggah/); assert.match(main(g.d), new RegExp(`SID ganda di SID Client dengan CID berbeda: ${sc[0].SID}`));
   });
   console.log(`\n${n} tes UI v5 lulus`); process.exit(0);
 })().catch((e) => { console.error('GAGAL:', e.message); process.exit(1); });
