@@ -56,9 +56,20 @@ t('#7 SID ganda di SID Client terdeteksi (CID beda = conflict)', () => {
   assert.ok(C.diagnoseSid(rows[0].SID, c2, C.runValidasi(c2, C.newState())).stages.some((s) => s.stage === 'SID Client ganda' && s.status === 'warn'));
   assert.strictEqual(ctx.sidDupes.length, 0);
 });
-t('#6 StockPosition dikenali dari nama berkas; tanpa berkas itu ctx.hasPos = false', () => {
-  assert.strictEqual(C.detectSlot('StockPosition_20261013.txt'), 'pos'); assert.strictEqual(C.detectSlot('Stock Position 13 Okt.txt'), 'pos'); assert.strictEqual(C.detectSlot('BUYMARGIN_ZZ_1.txt'), null);
-  assert.strictEqual(C.buildContext(Object.assign({}, base, { posText: undefined })).hasPos, false); assert.strictEqual(ctx.hasPos, true);
+t('#6 Data Transaksi LR/RP dikenali dari nama berkas; StockPosition tidak lagi dipakai', () => {
+  assert.strictEqual(C.detectSlot('LR_20261015_EP.txt'), 'lrsettle'); assert.strictEqual(C.detectSlot('RP_20261015_EP.txt'), 'rpsettle');
+  assert.strictEqual(C.detectSlot('RP_Final_20261015.xlsx'), null); assert.strictEqual(C.detectSlot('StockPosition_20261013.txt'), null); assert.strictEqual(C.detectSlot('BUYMARGIN_ZZ_1.txt'), null);
+});
+t('#9 LR belum settle menambah Loan Existing & saham; RP belum settle membayar Accrued dulu lalu Loan, saham keluar', () => {
+  const op = C.parseOpFile('0|20261015|ZZ|S1|A|1000|50|0\n1|X|S1|AAA|300\n0|20261015|ZZ|S2|B|1000|50|0\n1|X|S2|AAA|300');
+  const lr = C.loadLrBelumSettle('0|ZZ|S1|LR-1|20261015|20261015|20261019|200\n1|LR-1|BBB|100\n1|LR-1|AAA|50');
+  const rp = C.loadRpBelumSettle('0|ZZ|S1|RP-1|20261015|20261015|20261019|120\n1|RP-1|AAA|100\n0|ZZ|S2|RP-2|20261015|20261015|20261019|5000\n1|RP-2|AAA|300\n0|ZZ|S9|RP-3|20261015|20261015|20261019|1');
+  const after = C.applyRpAdjustmentToOp(C.applyLrAdjustmentToOp(op, lr), rp);
+  assert.deepStrictEqual([after.get('S1').loan_existing, after.get('S1').accrued_interest, { ...after.get('S1').stocks }], [1130, 0, { AAA: 250, BBB: 100 }]); // 1000+200 − (120−50)
+  assert.deepStrictEqual([after.get('S2').loan_existing, after.get('S2').accrued_interest, { ...after.get('S2').stocks }], [0, 0, {}]); // RP > Loan+Accrued → 0, tidak minus
+  assert.strictEqual(op.get('S1').loan_existing, 1000, 'OP asli tidak berubah');
+  const c2 = C.buildContext(Object.assign({}, base, { opText: '0|20261015|ZZ|S1|A|1000|50|0', posText: undefined, lrSettleText: undefined, rpSettleText: '0|ZZ|S1|RP-1|1|1|1|10\n0|ZZ|S9|RP-3|1|1|1|1' }));
+  assert.deepStrictEqual(c2.settleMissing, { lr: [], rp: ['S9'] }); assert.strictEqual(c2.op.get('S1').accrued_interest, 40); assert.ok(c2.hasRpSettle && !c2.hasLrSettle);
 });
 // ── #4 Hasil_TRX_PEI benar-benar dipakai di Langkah 4 ──
 const st0 = C.newState(); const hasil0 = sheetRows(C.hasilTrxPei(C.runPei(ctx, st0)));

@@ -55,5 +55,15 @@ for s in random.sample(sids, 8):
 open(f'{OUT}/pos.txt','w').write('\n'.join(pos)+'\n')
 lrs = [f'0|{CODE}|{s}|LR{i}|20261015|20261017|20261030|{random.choice([10e6,75e6])}' for i,s in enumerate(random.sample(sids,6))]
 open(f'{OUT}/lrsettle.txt','w').write('\n'.join(lrs)+'\n')
+# LR/RP belum settle versi lengkap: baris 0| per transaksi + baris saham 1|No Trx|Saham|Volume
+def settle(kind, n):
+    out = []
+    for i,s in enumerate(random.sample(sids, n)):
+        no = f'{kind}-202610-{i:06d}'
+        out.append(f'0|{CODE}|{s}|{no}|20261015|20261015|20261019|{random.choice([10e6,75e6,400e6])}')
+        for st in random.sample(stocks, random.randint(1,2)): out.append(f'1|{no}|{st}|{random.choice([500,2000,15000])}')
+    return out
+open(f'{OUT}/lrsettle_full.txt','w').write('\n'.join(settle('LR', 5))+'\n')
+open(f'{OUT}/rpsettle.txt','w').write('\n'.join(settle('RP', 5))+'\n')
 json.dump({'sids':sids, 'code': CODE}, open(f'{OUT}/meta.json','w'))
 print('data ok', len(rows), 'trx rows,', len(sids), 'sid')
