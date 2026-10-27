@@ -7,7 +7,7 @@ async function boot() {
   const dom = new JSDOM(fs.readFileSync(P + '/index.html', 'utf8').replace(/<script[^>]*><\/script>/g, ''), { url: 'https://pei.test/', runScripts: 'outside-only', pretendToBeVisual: true });
   const w = dom.window; const calls = { xlsx: [] };
   w.URL.createObjectURL = () => 'blob:x'; w.HTMLAnchorElement.prototype.click = function () {};
-  for (const f of ['vendor/xlsx.full.min.js', 'config.js', 'core.js']) w.eval(fs.readFileSync(path.join(P, f), 'utf8'));
+  for (const f of ['vendor/xlsx-style.min.js', 'vendor/xlsx-style-alias.js', 'vendor/xlsx.full.min.js', 'config.js', 'core.js', 'porto.js']) w.eval(fs.readFileSync(path.join(P, f), 'utf8'));
   w.XLSX.writeFile = (wb, name) => calls.xlsx.push({ wb, name });
   w.eval(fs.readFileSync(P + '/app.js', 'utf8')); await wait();
   return { w, d: w.document, calls, CFG: w.PEI_CONFIG };

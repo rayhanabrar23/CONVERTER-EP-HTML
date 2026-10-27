@@ -1,0 +1,4 @@
+node_modules/
+package-lock.json
+# data sintetis, dibuat ulang oleh: python3 tests/gen_data.py
+tests/data/

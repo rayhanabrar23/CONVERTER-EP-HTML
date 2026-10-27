@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const C = window.PEICore, X = window.XLSX;
+  const C = window.PEICore, X = window.XLSX, P = window.PEIPorto;
   const CFG = Object.assign({ variant: 'umum', title: 'PEI Generator', chip: null, participantCode: null, participantLabel: null, clPartisipan: null, partnerLabel: 'partisipan' }, window.PEI_CONFIG || {});
   const LOCKED = !!CFG.participantCode; // kode partisipan dikunci oleh config.js
   const store = { get(k) { try { return localStorage.getItem('pei.' + CFG.variant + '.' + k); } catch (e) { return null; } },
@@ -28,6 +28,7 @@
     { id: 'sidclient', label: '6. SID Client (daftar nasabah PEI)', acc: '.xlsx', req: 1, kind: 'rows' },
     { id: 'lrsettle', label: '7. Data Transaksi LR', acc: '.txt', kind: 'text', hint: 'opsional — LR belum settle: menambah Loan Existing & saham di OP' },
     { id: 'rpsettle', label: '8. Data Transaksi RP', acc: '.txt', kind: 'text', hint: 'opsional — RP belum settle: mengurangi Accrued lalu Loan Existing, saham keluar dari OP' },
+    { id: 'porto', label: '9. Porto kemarin (SUMM_TRX_PEI)', acc: '.xlsx,.xls', kind: 'porto', hint: 'opsional — porto hari sebelumnya; di Langkah 4 dibuat porto hari ini (ditambah RP/LR Final)' },
   ];
   const S = { user: 'Lokal', role: 'PEI', files: {}, ctx: null, st: C.newState(), pei: null, vres: null, tab: 'upload', msg: null, sent: 0, rpSaved: false, rpUnlocked: false, rpFile: null, hasilSaved: false, hasil: null, valRun: false, warn: [], hasilSig: null,
     code: CFG.participantCode || store.get('code') || '', codeAuto: false, clp: (() => { const v = store.get('clp'); return v != null && v !== '' ? Number(v) : CFG.clPartisipan; })(), idMsg: null };
@@ -39,6 +40,7 @@
     if (kind === 'text') { r.onload = () => res(String(r.result)); r.readAsText(f); return; }
     r.onload = () => {
       try {
+        if (kind === 'porto') { const wb = X.read(r.result, { type: 'array', cellFormula: true, sheetStubs: true }); const m = P.parsePorto(wb); return res({ wb, clients: m.clients.size, last: P.maxTrxDate(m) }); }
         const wb = X.read(r.result, { type: 'array', raw: /\.csv$/i.test(f.name) });
         if (kind === 'hasil') {
           const name = wb.SheetNames.find((n) => n === 'Loan Request (LR)') || wb.SheetNames.find((n) => n === 'Buy (Loan)');
@@ -187,7 +189,7 @@
       const f = (id) => S.files[id] && S.files[id].data;
       const ctx = C.buildContext({ closingRows: f('closing'), riskText: f('risk'), opText: f('op'), nettingRows: f('netting'), clText: f('cl'), sidClientRows: f('sidclient'), lrSettleText: f('lrsettle'), rpSettleText: f('rpsettle'), hasilBuyRows: f('hasil') });
       resolveCode(ctx.brokerCodes); S.ctx = ctx;
-      S.st = C.newState(); S.sent = 0; S.rpSaved = S.rpUnlocked = S.hasilSaved = S.valRun = false; S.rpFile = null; S.hasil = null; recompute(); S.tab = 'rp';
+      S.st = C.newState(); S.sent = 0; S.rpSaved = S.rpUnlocked = S.hasilSaved = S.valRun = false; S.rpFile = null; S.hasil = null; S.porto = null; recompute(); S.tab = 'rp';
       const vd = S.ctx.clValueDate, td = new Date().toISOString().slice(0, 10).replace(/-/g, '/');
       S.msg = { t: `✅ File bersama dimuat — ${S.ctx.op.size} SID di OP, ${S.ctx.cp.size} harga saham, ${S.ctx.netting.size} SID di Netting, ${S.ctx.cl.size} di Credit Limit, ${S.ctx.peiSids.size} nasabah PEI. Kode Partisipan: ${S.code}${S.codeAuto ? ' (dari berkas)' : ''}.` + (vd && vd !== td ? ` ⚠️ Value Date Credit Limit ${vd} ≠ hari ini ${td}.` : '') };
       S.warn = [];
@@ -333,7 +335,51 @@
       h('div', { class: 'card' }, h('h2', {}, 'Export ke sistem (iFast)'),
         dropped ? h('div', { class: 'msg wr' }, `⚠️ ${dropped} nasabah punya transaksi tetapi TIDAK masuk file iFast karena gagal validasi. Lihat tabel di atas atau tab Diagnostik.`) : null,
         h('div', { class: 'grid' }, block('Repayment iFast', R, 'Repayment Direct', 'Repayment Proceed'), block('Loan Request iFast', L, 'Loan', 'Loan Request')),
-        h('p', { class: 'mut' }, `Semua file memakai nilai RP Final / LR Final terkini. Kode Partisipan di file iFast: ${S.code}.`)));
+        h('p', { class: 'mut' }, `Semua file memakai nilai RP Final / LR Final terkini. Kode Partisipan di file iFast: ${S.code}.`)),
+      portoCard());
+  }
+
+  // ── porto harian: porto kemarin + RP/LR Final hari ini → porto hari ini (COMP + sheet per CID) ──
+  const isoToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  function portoBase() {
+    const f = S.files.porto;
+    return f ? P.parsePorto(f.data.wb) : { comp: { group: [], reguler: [], maxGroup: null, maxNonGroup: null, rate: null }, clients: new Map() };
+  }
+  function portoCard() {
+    const po = S.porto = S.porto || { date: isoToday(), due: '', rate: CFG.portoRate || 9.5, result: null };
+    const trx = P.serialOfIso(po.date); const due = po.due ? P.serialOfIso(po.due) : (trx > 0 ? P.addWorkdays(trx, 2) : NaN);
+    const { postings, skipped } = P.postingsFromResults(S.vres, S.ctx, C.lolosRp, C.lolosLr);
+    let base = null, baseErr = null; try { base = portoBase(); } catch (e) { baseErr = e.message; }
+    const diffs = base && S.files.porto ? P.compareWithOp(base, S.ctx) : [];
+    const make = () => {
+      try {
+        const rate = Number(String(po.rate).replace(',', '.'));
+        if (!(rate > 0 && rate < 100)) throw new Error('Bunga transaksi baru tidak valid.');
+        const model = portoBase(); const r = P.applyDay(model, postings, { trxDate: trx, dueDate: due, rate });
+        const wb = P.buildWorkbook(model, window.XLSXStyle, { asOf: trx, rate, prices: P.pricesFromCtx(S.ctx) });
+        const name = `Porto PEI ${po.date.replace(/-/g, '')}.xlsx`;
+        download(name, new Blob([window.XLSXStyle.write(wb, { type: 'array', bookType: 'xlsx' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+        po.result = { name, log: r.log, warn: r.warn };
+      } catch (e) { po.result = { error: e.message }; }
+      render();
+    };
+    const inp = (label, type, key, extra) => h('label', { class: 'row' }, h('span', {}, label), h('input', Object.assign({ type, class: 'cell', 'aria-label': label, value: po[key] || '',
+      onchange: (e) => { po[key] = e.target.value; po.result = null; later(); } }, extra || {})));
+    const res = po.result;
+    return h('div', { class: 'card' }, h('h2', {}, 'Porto harian (rekap portofolio)'),
+      h('p', { class: 'mut' }, S.files.porto ? `Porto kemarin: ${S.files.porto.name} — ${S.files.porto.data.clients} nasabah, transaksi terakhir ${S.files.porto.data.last ? P.isoOf(S.files.porto.data.last) : '-'}.`
+        : 'Porto kemarin belum diunggah (Langkah 1, berkas 9) → porto baru dibuat hanya dari transaksi hari ini.'),
+      baseErr ? h('div', { class: 'msg er' }, 'Porto kemarin tidak terbaca: ' + baseErr) : null,
+      h('div', { class: 'row' }, inp('Tanggal transaksi', 'date', 'date'), inp('Jatuh tempo (T+2)', 'date', 'due', { value: po.due || (due > 0 ? P.isoOf(due) : '') }), inp('Bunga transaksi baru (% p.a.)', 'text', 'rate', { inputmode: 'decimal' })),
+      h('p', { class: 'mut' }, `Yang ditambahkan: ${postings.filter((x) => x.lr > 0).length} LR (tranche baru, FUNDING = LR Final) dan ${postings.filter((x) => x.rp > 0).length} RP (melunasi tranche terlama dulu) — hanya nasabah yang masuk file iFast. Harga & HC dari Closing Price dan Risk Parameter hari ini.`),
+      skipped.length ? h('div', { class: 'msg wr' }, `⚠️ SID tanpa CID di SID Client (tidak masuk porto): ${skipped.join(', ')}`) : null,
+      diffs.length ? h('div', { class: 'msg wr' }, h('b', {}, `⚠️ Outstanding porto kemarin ≠ Loan Existing OP untuk ${diffs.length} nasabah`),
+        h('ul', {}, diffs.slice(0, 10).map((d) => h('li', {}, `${d.cid} (${d.sid}): porto ${rp(d.porto)} vs OP ${rp(d.op)}`))), diffs.length > 10 ? h('small', {}, `… dan ${diffs.length - 10} lainnya`) : null) : null,
+      h('div', { class: 'row' }, h('button', { disabled: !(trx > 0) || !!baseErr, onclick: make }, `⬇️ Unduh Porto PEI ${String(po.date || '').replace(/-/g, '')}.xlsx`)),
+      res && res.error ? h('div', { class: 'msg er' }, '❌ ' + res.error) : null,
+      res && !res.error ? h('div', {}, h('div', { class: 'msg okb' }, `✅ ${res.name} dibuat. Simpan file ini — besok unggah sebagai "Porto kemarin".`),
+        res.warn.length ? h('div', { class: 'msg wr' }, h('ul', {}, res.warn.map((w) => h('li', {}, w)))) : null,
+        res.log.length ? table([{ t: 'CID', f: (x) => x.cid }, { t: 'Jenis', f: (x) => x.kind }, { t: 'Keterangan', f: (x) => x.text }], res.log) : null) : null);
   }
   function viewVal() {
     const up = h('div', { class: 'card' }, h('h2', {}, 'Upload Hasil TRX'),
