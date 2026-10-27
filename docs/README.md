@@ -6,7 +6,8 @@ Port dari `pages/Daily RP and LR Calculation.py` (Streamlit). Aplikasi statis mu
 
 ## Struktur
 ```
-public/    index.html, config.js (pengaturan versi), app.js, core.js, style.css, vendor/xlsx
+public/    index.html, config.js (pengaturan versi), app.js, core.js, porto.js (porto harian), style.css,
+           vendor/xlsx (pembaca), vendor/xlsx-style (penulis Excel bergaya: xlsx-js-style, Apache-2.0)
 tests/     tes perilaku, tes perbaikan, tes UI, tes pembanding vs Python asli (compare.js, ref_python.py)
 ```
 
@@ -23,6 +24,8 @@ tests/     tes perilaku, tes perbaikan, tes UI, tes pembanding vs Python asli (c
 3. **LR** — unggah file RP Final dari langkah 2. LR dihitung ulang dari RP Final itu (nasabah yang tidak ada di file dianggap RP Final = 0). LR Final bisa diedit atau di-*Auto-Adjust* bila Nilai Beli melebihi kapasitas. Klik *Final & Unduh* untuk membuat `Hasil_TRX_PEI.xlsx` (opsional: `LR_Final_YYYYMMDD.xlsx`).
 4. **Validasi & Export** — unggah `Hasil_TRX_PEI.xlsx`, jalankan validasi, Auto-Adjust bila perlu, lalu unduh file iFast (Repayment Proceed dan Loan Request).
 
+Di Langkah 4 juga ada kartu **Porto harian** (lihat di bawah).
+
 Tab *Kenapa tidak muncul?* (penelusuran per nasabah) dan *Catatan* (log perubahan) bisa dibuka kapan saja setelah langkah 1.
 
 Catatan LR-1: bila sheet LR pada file yang diunggah di langkah 4 adalah versi partisipan yang memuat kolom Available/Volume (≥14 kolom), itu yang dipakai. Jika tidak (mis. Hasil_TRX_PEI buatan aplikasi ini), LR-1 memakai Available Qty dari Risk Parameter.
@@ -30,6 +33,20 @@ Catatan LR-1: bila sheet LR pada file yang diunggah di langkah 4 adalah versi pa
 ## Identitas partisipan
 - **Kode Partisipan** ditulis di kolom `Participant Code` pada file iFast. Versi ini mengunci kode **EP**; bila Broker Code di berkas Credit Limit/OP bukan EP, proses ditolak.
 - **Credit Limit Partisipan** (limit partisipan di PEI) dipakai untuk check limit partisipan di Langkah 4: CL Partisipan + total RP > total LR. Default **Rp 160.000.000.000**, bisa diubah di Langkah 1 (tersimpan di browser).
+
+## Porto harian (rekap portofolio & pendanaan)
+Format sama dengan SUMM_TRX_PEI: sheet **COMP** (Group & Reguler: Original Funding, Repayment, Outstanding, Accrued Interest, Portofolio, Ratio, Plafond, Usage, Shortfall), sheet **HARGA** (Closing Price + haircut Risk Parameter hari ini) dan **satu sheet per CID** (riwayat transaksi + blok Collateral Saham + blok Pelunasan Funding). RISK P & Req tidak dibuat lagi.
+
+Alur harian:
+1. Langkah 1 — unggah **Porto kemarin** (berkas 9; nama memuat `porto` atau `SUMM_TRX` ikut terdeteksi dari folder). File SUMM_TRX_PEI lama (.xls/.xlsx) bisa langsung dipakai sebagai porto pertama.
+2. Langkah 4 — setelah validasi, isi tanggal transaksi (jatuh tempo default T+2 hari kerja) dan bunga transaksi baru (default 9,5% dari `config.js` → `portoRate`), lalu **Unduh Porto PEI YYYYMMDD.xlsx**. Besok file itu yang diunggah sebagai porto kemarin.
+
+Yang ditambahkan (hanya nasabah PEI yang masuk file iFast, dipetakan SID → CID lewat SID Client):
+- **LR Final** → baris beli per saham dengan **tranche baru** (A, B, …, Z, AA, …); FUNDING = LR Final (nilai, dibagi sebanding nilai beli).
+- **RP Final** → baris `RP` yang melunasi **tranche terlama dulu** (pokok dulu; kelebihan = bunga), plus baris jual saham yang keluar dari OP (collateral berkurang). Sesuai formula INTEREST porto, bunga tranche ikut lunas saat tranche dilunasi.
+- Nasabah baru → sheet & baris COMP baru (plafond 0, diisi manual — ditandai hijau).
+
+Aturan pembentukan ulang: formula ditulis ulang sama persis dengan SUMM_TRX_PEI (diuji: total FUNDING/INTEREST/Portofolio/Ratio sama dengan Excel), **tarif bunga tiap transaksi lama dipertahankan** (tidak dihitung mundur dengan tarif baru), nilai yang diketik manual (mis. LR Final) dan koreksi di ujung formula (mis. `…+25000`) dipertahankan (sel manual ditandai kuning). Tanggal posisi = sel `COMP!M2` (bukan TODAY(), jadi laporan bisa diulang). Porto yang sudah memuat transaksi tanggal ≥ tanggal proses ditolak (mencegah dobel). Aplikasi memberi peringatan bila Outstanding porto kemarin ≠ Loan Existing OP.
 
 ## Untuk apa file Hasil_TRX_PEI?
 Hasil_TRX_PEI.xlsx adalah **berkas keputusan final** RP & LR hari itu (3 sheet: Repayment per saham, Loan Request per nasabah, Summary semua nasabah PEI). Fungsinya:
@@ -75,6 +92,9 @@ python3 tests/ref_python.py && npm run test:python
 - Tanpa file versi partisipan (≥14 kolom), check LR-1 memakai Available Qty dari Risk Parameter.
 
 ## Riwayat perubahan
+### v5.4
+- **Porto harian otomatis** (`public/porto.js`, kartu di Langkah 4, berkas opsional 9 di Langkah 1). Penulis Excel bergaya `vendor/xlsx-style.min.js` (xlsx-js-style 1.2.0) dimuat sebagai `window.XLSXStyle`; pembaca tetap `vendor/xlsx.full.min.js`.
+
 ### v5 (2026-10-18)
 1. **LR Final tidak bisa melebihi Max LR Final.** Edit di atas batas ditolak dengan pesan; bila batas turun setelah RP diubah, check baru `LR-4. LR Final ≤ Max LR Final` gagal → nasabah tidak masuk iFast.
 2. **Input angka ketat.** Diterima: `7845750`, `7.845.750`, `7,845,750`, `Rp 7.845.750`, `7.845.750,00`. Ditolak (tidak disimpan): desimal seperti `7.845.750,50` / `7845750.5`, angka negatif, teks.

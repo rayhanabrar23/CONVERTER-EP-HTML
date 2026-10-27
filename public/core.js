@@ -749,6 +749,7 @@
     ['sidclient', /sid\s*client/i, ['.xlsx']],
     ['lrsettle', /^lr[\s_\-]?\d{8}/i, ['.txt']], // opsional: LR_YYYYMMDD_*.txt
     ['rpsettle', /^rp[\s_\-]?\d{8}/i, ['.txt']], // opsional: RP_YYYYMMDD_*.txt
+    ['porto', /(porto|summ[\s_\-]*trx)/i, ['.xlsx', '.xls']], // opsional: porto kemarin (format SUMM_TRX_PEI)
   ];
   function detectSlot(filename) {
     const name = String(filename || '').split(/[\\/]/).pop();

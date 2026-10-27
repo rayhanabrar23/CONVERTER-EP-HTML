@@ -7,4 +7,5 @@ window.PEI_CONFIG = {
   participantLabel: 'EP (MNC Sekuritas)',
   clPartisipan: 160000000000,   // Credit Limit partisipan di PEI (default, bisa diubah di Langkah 1)
   partnerLabel: 'MNC',          // sebutan pihak partisipan di pesan
+  portoRate: 9.5,               // bunga (% p.a.) untuk transaksi baru di porto; transaksi lama tetap memakai tarif saat itu
 };

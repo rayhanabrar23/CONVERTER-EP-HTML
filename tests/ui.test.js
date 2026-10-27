@@ -6,7 +6,7 @@ async function boot(role) {
   const w = dom.window; const calls = { audit: [], xlsx: [], csv: [] };
   w.fetch = async () => { calls.net = (calls.net || 0) + 1; return { ok: false }; };
   w.URL.createObjectURL = (b) => { calls.csv.push(b); return 'blob:x'; }; w.HTMLAnchorElement.prototype.click = function () {};
-  for (const f of ['vendor/xlsx.full.min.js', 'config.js', 'core.js']) w.eval(fs.readFileSync(path.join(P, f), 'utf8'));
+  for (const f of ['vendor/xlsx-style.min.js', 'vendor/xlsx-style-alias.js', 'vendor/xlsx.full.min.js', 'config.js', 'core.js', 'porto.js']) w.eval(fs.readFileSync(path.join(P, f), 'utf8'));
   w.XLSX.writeFile = (wb, name) => calls.xlsx.push({ wb, name });
   w.eval(fs.readFileSync(P + '/app.js', 'utf8')); await wait();
   return { w, d: w.document, calls };
@@ -95,6 +95,15 @@ const tabsOn = (d) => [...d.querySelectorAll('#tabs button')].filter((b) => !b.d
   await t('Langkah 4: file iFast Repayment memakai RP Final hasil edit', async () => {
     btnByText(d, 'Excel (.xlsx)').click(); await wait(); const wb = calls.xlsx.pop().wb;
     const r = w.XLSX.utils.sheet_to_json(wb.Sheets['Repayment Direct']).find((x) => x['SID Client'] === sidEdited); assert.ok(r, 'SID hasil edit ada'); assert.strictEqual(r['Repayment Value'], Math.round(before * 0.99));
+  });
+  await t('Langkah 4: Porto harian dibuat dari RP/LR yang masuk iFast (tanpa porto kemarin → porto baru)', async () => {
+    assert.match(d.getElementById('main').textContent, /Porto harian/);
+    let built = null; const orig = w.XLSXStyle.write; w.XLSXStyle.write = (wb, o) => { built = wb; return orig(wb, o); };
+    btnByText(d, 'Unduh Porto PEI').click(); await wait();
+    assert.ok(built, 'workbook porto dibuat'); assert.strictEqual(built.SheetNames[0], 'COMP'); assert.strictEqual(built.SheetNames[1], 'HARGA');
+    assert.match(d.getElementById('main').textContent, /Porto PEI \d{8}\.xlsx dibuat/);
+    assert.ok(built.SheetNames.length > 2, 'ada sheet nasabah');
+    const ws = built.Sheets[built.SheetNames[2]]; assert.strictEqual(ws.C3.v, 'B/S'); assert.ok(ws.N4.f || typeof ws.N4.v === 'number', JSON.stringify([built.SheetNames, ws.A4, ws.C4, ws.N4, ws['!ref']]));
   });
   await t('Diagnostik: netting nol dijelaskan lewat UI', async () => {
     await tab(d, 'Kenapa tidak muncul?'); const sid = JSON.parse(fs.readFileSync(D + '/meta.json')).sids[5];
