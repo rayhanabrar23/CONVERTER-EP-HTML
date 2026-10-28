@@ -60,14 +60,23 @@ t('#6 Data Transaksi LR/RP dikenali dari nama berkas; StockPosition tidak lagi d
   assert.strictEqual(C.detectSlot('LR_20261015_EP.txt'), 'lrsettle'); assert.strictEqual(C.detectSlot('RP_20261015_EP.txt'), 'rpsettle');
   assert.strictEqual(C.detectSlot('RP_Final_20261015.xlsx'), null); assert.strictEqual(C.detectSlot('StockPosition_20261013.txt'), null); assert.strictEqual(C.detectSlot('BUYMARGIN_ZZ_1.txt'), null);
 });
+t('#11 OP: kolom 6 = Total Loan (pokok + accrued), kolom 7 = accrued yang sudah termasuk → RP Max = kolom 6', () => {
+  const op = C.parseOpFile('0|20261027|ZZ|S1|FELIX|822300859|4300859|0\n1|X|S1|TLKM|15600');
+  assert.strictEqual(op.get('S1').loan_existing, 818000000); assert.strictEqual(op.get('S1').accrued_interest, 4300859);
+  const c = C.buildContext(Object.assign({}, base, { opText: '0|20261027|ZZ|S1|FELIX|822300859|4300859|0\n1|X|S1|TLKM|15600', posText: undefined, lrSettleText: undefined }));
+  const d = C.computeSid('S1', Object.assign({}, c, { netSell: new Map([['S1', { TLKM: { lot: 15600, value: 1 } }]]), netBuy: new Map() }), { mode: 'val' });
+  assert.strictEqual(d.total_rp_maks, 822300859, 'RP Max = Total Loan, accrued tidak ditambah lagi'); assert.strictEqual(d.total_loan, 822300859);
+  const full = C.computeSid('S1', Object.assign({}, c, { netSell: new Map([['S1', { TLKM: { lot: 15600, value: 1 } }]]), netBuy: new Map() }), { mode: 'val', rpOverride: 822300859 });
+  assert.strictEqual(full.loan_after_rp + full.accrued_after_rp, 0, 'RP sebesar Total Loan → lunas tanpa sisa');
+});
 t('#9 LR belum settle menambah Loan Existing & saham; RP belum settle membayar Accrued dulu lalu Loan, saham keluar', () => {
   const op = C.parseOpFile('0|20261015|ZZ|S1|A|1000|50|0\n1|X|S1|AAA|300\n0|20261015|ZZ|S2|B|1000|50|0\n1|X|S2|AAA|300');
   const lr = C.loadLrBelumSettle('0|ZZ|S1|LR-1|20261015|20261015|20261019|200\n1|LR-1|BBB|100\n1|LR-1|AAA|50');
   const rp = C.loadRpBelumSettle('0|ZZ|S1|RP-1|20261015|20261015|20261019|120\n1|RP-1|AAA|100\n0|ZZ|S2|RP-2|20261015|20261015|20261019|5000\n1|RP-2|AAA|300\n0|ZZ|S9|RP-3|20261015|20261015|20261019|1');
   const after = C.applyRpAdjustmentToOp(C.applyLrAdjustmentToOp(op, lr), rp);
-  assert.deepStrictEqual([after.get('S1').loan_existing, after.get('S1').accrued_interest, { ...after.get('S1').stocks }], [1130, 0, { AAA: 250, BBB: 100 }]); // 1000+200 − (120−50)
+  assert.deepStrictEqual([after.get('S1').loan_existing, after.get('S1').accrued_interest, { ...after.get('S1').stocks }], [1080, 0, { AAA: 250, BBB: 100 }]); // pokok 950 (total 1000 − accrued 50) +200 − (120−50)
   assert.deepStrictEqual([after.get('S2').loan_existing, after.get('S2').accrued_interest, { ...after.get('S2').stocks }], [0, 0, {}]); // RP > Loan+Accrued → 0, tidak minus
-  assert.strictEqual(op.get('S1').loan_existing, 1000, 'OP asli tidak berubah');
+  assert.strictEqual(op.get('S1').loan_existing, 950, 'OP asli tidak berubah (pokok = total − accrued)');
   const c2 = C.buildContext(Object.assign({}, base, { opText: '0|20261015|ZZ|S1|A|1000|50|0', posText: undefined, lrSettleText: undefined, rpSettleText: '0|ZZ|S1|RP-1|1|1|1|10\n0|ZZ|S9|RP-3|1|1|1|1' }));
   assert.deepStrictEqual(c2.settleMissing, { lr: [], rp: ['S9'] }); assert.strictEqual(c2.op.get('S1').accrued_interest, 40); assert.ok(c2.hasRpSettle && !c2.hasLrSettle);
 });

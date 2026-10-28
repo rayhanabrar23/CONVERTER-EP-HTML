@@ -92,6 +92,8 @@ python3 tests/ref_python.py && npm run test:python
 - Tanpa file versi partisipan (≥14 kolom), check LR-1 memakai Available Qty dari Risk Parameter.
 
 ## Riwayat perubahan
+### v5.5
+- **Berkas OP dibaca ulang dengan benar**: di baris `0|`, kolom 6 adalah **Total Loan** (pokok + accrued) dan kolom 7 adalah accrued yang **sudah termasuk** di kolom 6. Sebelumnya keduanya dijumlahkan sehingga accrued terhitung dua kali (RP Max kelebihan sebesar accrued). Sekarang pokok = kolom 6 − kolom 7, **RP Max = Total Loan = kolom 6**. Tabel RP, file RP_Final dan Summary Hasil_TRX_PEI menampilkan **Total Loan (OP)**. `test:python` makin berbeda dengan skrip Python lama karena perbaikan ini.
 ### v5.4
 - **Porto harian otomatis** (`public/porto.js`, kartu di Langkah 4, berkas opsional 9 di Langkah 1). Penulis Excel bergaya `vendor/xlsx-style.min.js` (xlsx-js-style 1.2.0) dimuat sebagai `window.XLSXStyle`; pembaca tetap `vendor/xlsx.full.min.js`.
 
