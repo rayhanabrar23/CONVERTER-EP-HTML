@@ -144,8 +144,10 @@
       if (p[0] === '0') {
         if (p.length < 7) continue;
         const sid = p[3].trim(); if (p[2] && p[2].trim()) opBrokers.add(p[2].trim().toUpperCase());
+        // kolom 6 = TOTAL loan (pokok + accrued), kolom 7 = accrued yang SUDAH termasuk di kolom 6
+        const total = f0(p[5]), acc = Math.max(Math.min(f0(p[6]), total), 0);
         result.set(sid, {
-          loan_existing: f0(p[5]), accrued_interest: f0(p[6]),
+          loan_existing: total - acc, accrued_interest: acc, // loan_existing = pokok
           available_limit: p.length > 7 ? f0(p[7]) : 0,
           name: p.length > 4 ? p[4].trim() : sid, stocks: dict(),
         });
@@ -365,7 +367,7 @@
 
     const rpDetail = []; const stocksAfterRp = copyDict(stocksOp); let totalRpMin = 0;
     const hasRp = Object.keys(sellStocks).length > 0;
-    const rpActive = hasRp && loanEx > 0;
+    const rpActive = hasRp && loanEx + accrued > 0;
     const subtract = (stock, lot) => { stocksAfterRp[stock] = (stocksAfterRp[stock] || 0) - lot; if (stocksAfterRp[stock] <= 0) delete stocksAfterRp[stock]; };
 
     if (mode === 'pei') {
@@ -405,7 +407,7 @@
 
     // checks RP
     if (!rpActive) {
-      const msg = loanEx <= 0 ? '⏭ Dilewati — Loan Existing = 0' : 'Tidak ada transaksi jual';
+      const msg = loanEx + accrued <= 0 ? '⏭ Dilewati — Total Loan (OP) = 0' : 'Tidak ada transaksi jual';
       add('RP-1. Pengecekan Saham Jual', true, msg); add('RP-2. Lot Sell ≤ Lot di OP', true, msg); add('RP-3. Rasio After RP < 65%', true, msg);
     } else {
       const rp1 = Object.keys(sellStocks).filter((s) => (stocksOp[s] || 0) === 0);
@@ -418,7 +420,7 @@
       else add('RP-3. Rasio After RP < 65%', false, 'Collateral = 0');
     }
     if (opts.rpOverride != null && (rpActive || opts.rpOverride > 0)) // hanya muncul bila RP diedit
-      add('RP-4. RP Final ≤ RP Max', !rpOver, rpOver ? `❌ RP Final ${fmtRp(rpFinal)} melebihi RP Max ${fmtRp(totalRpMaks)} (Loan + Accrued) → tidak masuk iFast` : `RP Final ${fmtRp(rpFinal)} ≤ RP Max ${fmtRp(totalRpMaks)}`);
+      add('RP-4. RP Final ≤ RP Max', !rpOver, rpOver ? `❌ RP Final ${fmtRp(rpFinal)} melebihi RP Max ${fmtRp(totalRpMaks)} (Total Loan OP = pokok + accrued) → tidak masuk iFast` : `RP Final ${fmtRp(rpFinal)} ≤ RP Max ${fmtRp(totalRpMaks)}`);
 
     // LR
     const hasLr = Object.keys(buyStocks).length > 0;
@@ -470,7 +472,7 @@
     }
 
     return {
-      sid, name, cid: ctx.sidToCid.get(sid) || sid, checks, has_rp: hasRp, has_lr: hasLr, rp_skipped: loanEx <= 0,
+      sid, name, cid: ctx.sidToCid.get(sid) || sid, checks, has_rp: hasRp, has_lr: hasLr, rp_skipped: loanEx + accrued <= 0, total_loan: loanEx + accrued,
       loan_existing: loanEx, accrued, avail_limit: availLim,
       stocks_op: stocksOp, stocks_after_rp: stocksAfterRp, stocks_after_lr: stocksAfterLr, buy_stocks: buyStocks,
       rp_detail: rpDetail, total_rp_maks: totalRpMaks, total_rp_min: totalRpMin, total_rp_min_ratio: totalRpMinRatio,
@@ -636,7 +638,7 @@
   const pct = (v) => (v !== null && v !== undefined ? fmtPct(v) : 'N/A');
   const failLabels = (d, pre) => d.checks.filter((c) => c.label.startsWith(pre) && !c.passed).map((c) => c.label.split('.')[0]).join(', ');
   function statusRp(d) {
-    if (d.rp_skipped) return 'Tidak ada RP (Loan Existing = 0)';
+    if (d.rp_skipped) return 'Tidak ada RP (Total Loan OP = 0)';
     if (lolosRp(d)) return d.rp_final > 0 ? 'Masuk iFast' : 'RP Final = 0 (tidak dikirim)';
     return 'TIDAK masuk iFast — gagal ' + failLabels(d, 'RP-');
   }
@@ -655,7 +657,7 @@
       if (d.lr_final > 0) lr.push({ SID: sid, Nama: d.name, 'RP Final': d.rp_final, 'Avail Limit': d.avail_limit, 'Avail Efektif': d.avail_efektif, 'LR @63%': toInt(d.max_lr_63),
         'Loan After RP': d.loan_after_rp, 'Coll After LR': d.coll_after_lr, 'Rasio LR': pct(d.rasio_lr), 'Max LR Final': toInt(d.max_lr_final), 'LR Final': d.lr_final, Binding: d.lr_binding,
         'Nilai Beli': d.total_buy_val, 'Auto-Adjust': d.adjusted ? 'Ya' : 'Tidak', 'Status LR': statusLr(d) });
-      sum.push({ SID: sid, Nama: d.name, 'Loan Existing': d.loan_existing, 'Coll Awal': d.coll_before_rp,
+      sum.push({ SID: sid, Nama: d.name, 'Total Loan (OP)': d.total_loan, 'Pokok': d.loan_existing, 'Accrued': d.accrued, 'Coll Awal': d.coll_before_rp,
         'RP Max (rekomendasi)': d.total_rp_maks, 'RP Final': d.rp_final, 'Loan After RP': d.loan_after_rp, 'Rasio RP': pct(d.rasio_rp),
         'Avail Efektif': d.avail_efektif, 'Max LR Final': toInt(d.max_lr_final), 'LR Final': d.lr_final, Binding: d.lr_binding, 'Rasio LR': pct(d.rasio_lr),
         'Nilai Beli': d.total_buy_val, 'Auto-Adjust': d.adjusted ? 'Ya' : 'Tidak', 'Status RP': d.has_rp ? statusRp(d) : '-', 'Status LR': d.has_lr ? statusLr(d) : '-' });
@@ -716,7 +718,8 @@
     }
     const op = ctx.op.get(sid);
     if (!op) push('OP', 'warn', 'SID tidak ada di Outstanding Position → Loan Existing 0, tidak ada RP.');
-    else push('OP', op.loan_existing > 0 ? 'ok' : 'warn', `Loan Existing ${fmtRp(op.loan_existing)}, accrued ${fmtRp(op.accrued_interest)}${op.loan_existing > 0 ? '' : ' → RP TIDAK muncul (hanya muncul jika Loan Existing > 0)'}.`);
+    else { const tl = op.loan_existing + op.accrued_interest;
+      push('OP', tl > 0 ? 'ok' : 'warn', `Total Loan ${fmtRp(tl)} (pokok ${fmtRp(op.loan_existing)} + accrued ${fmtRp(op.accrued_interest)})${tl > 0 ? '' : ' → RP TIDAK muncul (hanya muncul jika Total Loan > 0)'}.`); }
     const cl = ctx.cl.get(sid);
     push('Credit Limit', cl ? (cl.available_limit > 0 ? 'ok' : 'warn') : 'warn', cl ? `Available Limit ${fmtRp(cl.available_limit)}${cl.available_limit > 0 ? '' : ' → kapasitas LR 0 kecuali ada RP'}.` : 'SID tidak ada di Credit Limit → Available Limit 0.');
 
@@ -724,7 +727,7 @@
     let verdict = 'OK';
     if (d) {
       if (d.has_rp) {
-        if (d.rp_skipped) push('RP', 'drop', 'Ada jual bersih tapi Loan Existing = 0 → tidak ada RP.');
+        if (d.rp_skipped) push('RP', 'drop', 'Ada jual bersih tapi Total Loan (OP) = 0 → tidak ada RP.');
         else { const ok = lolosRp(d); push('RP', ok ? 'ok' : 'drop', `RP Final ${fmtRp(d.rp_final)}${d.rp_edited ? ' (diedit)' : ''}. ${ok ? 'Masuk file iFast RP.' : 'GAGAL check: ' + d.checks.filter((c) => c.label.startsWith('RP-') && !c.passed).map((c) => c.label + ' — ' + c.detail).join('; ')}`); if (!ok) verdict = 'RP gugur di validasi'; }
       } else push('RP', 'warn', 'Tidak ada jual bersih → tidak ada RP.');
       if (d.has_lr) {

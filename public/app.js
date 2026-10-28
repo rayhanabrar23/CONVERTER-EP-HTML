@@ -98,7 +98,7 @@
     const K = kind.toUpperCase(), p = C.parseRupiah(raw);
     if (p.error) { S.msg = { er: 1, t: `❌ ${K} Final ${d.name} (${sid}) tidak disimpan: "${raw}" ${p.error}.` }; return later(); }
     const cap = kind === 'rp' ? d.rp_cap : d.lr_cap;
-    if (p.value != null && p.value > cap) { S.msg = { er: 1, t: `❌ ${K} Final ${d.name} (${sid}) tidak disimpan: ${rp(p.value)} melebihi ${kind === 'rp' ? 'RP Max (Loan + Accrued)' : 'Max LR Final'} ${rp(cap)}. Isi maksimal ${rp(cap)}.` }; return later(); }
+    if (p.value != null && p.value > cap) { S.msg = { er: 1, t: `❌ ${K} Final ${d.name} (${sid}) tidak disimpan: ${rp(p.value)} melebihi ${kind === 'rp' ? 'RP Max (Total Loan OP)' : 'Max LR Final'} ${rp(cap)}. Isi maksimal ${rp(cap)}.` }; return later(); }
     S.msg = null;
     C.setOverride(S.st, kind, sid, p.value, S.user, p.value == null ? 'kembali ke rekomendasi' : 'edit manual'); audit(); recompute(); later();
   }
@@ -215,12 +215,12 @@
   const rpRowsOf = () => [...S.pei.values()].filter((d) => d.total_rp_maks > 0);
   const lrRowsOf = () => [...S.pei.values()].filter((d) => d.total_buy_val > 0);
   const stockStr = (d) => d.rp_detail.filter((x) => x.ada_di_op).map((x) => `${x.stock} (${Math.trunc(x.lot_keluar)})`).join(', ');
-  const rpFileRows = () => rpRowsOf().map((d) => ({ 'SID': d.sid, 'Nama': d.name, 'Saham (Lot Keluar)': stockStr(d), 'Loan Existing': d.loan_existing,
+  const rpFileRows = () => rpRowsOf().map((d) => ({ 'SID': d.sid, 'Nama': d.name, 'Saham (Lot Keluar)': stockStr(d), 'Total Loan (OP)': d.total_loan,
     'RP Min (ref, target 65%)': d.total_rp_min_ratio, 'RP Max (rekomendasi)': d.total_rp_maks, 'RP Final': d.rp_final }));
   function viewRp() {
     const rows = rpRowsOf();
     const cols = [{ t: 'SID', f: (d) => d.sid }, { t: 'Nama', f: (d) => d.name }, { t: 'Saham (Lot Keluar)', f: stockStr },
-      { t: 'Loan Existing', n: 1, f: (d) => rp(d.loan_existing) }, { t: 'RP Min (ref, target 65%)', n: 1, f: (d) => rp(d.total_rp_min_ratio) },
+      { t: 'Total Loan (OP)', n: 1, f: (d) => rp(d.total_loan) }, { t: 'RP Min (ref, target 65%)', n: 1, f: (d) => rp(d.total_rp_min_ratio) },
       { t: 'RP Max (rekomendasi)', n: 1, f: (d) => rp(d.total_rp_maks) }, { t: 'RP Final', f: (d) => cell(d, 'rp', 'rp_final', 'RP Final') }, { t: 'Rasio after RP', n: 1, f: (d) => pct(d.rasio_rp) }];
     const save = () => { xlsxOut(`RP_Final_${today()}.xlsx`, { 'RP Final': rpFileRows() }); S.rpSaved = true; render(); };
     return h('div', {}, stats(), msgBox(),
@@ -241,7 +241,7 @@
       const { map, errors } = C.readFinalColumn(rows, 'RP Final', '');
       if (errors.length) throw new Error(`${errors.length} nilai RP Final tidak bisa dibaca, perbaiki di Excel lalu unggah lagi: ` + errors.slice(0, 8).join('; ') + (errors.length > 8 ? ' …' : ''));
       const r = C.applyFinals(S.ctx, S.st, { rp: map }, S.user, 'dari file RP Final');
-      if (!r.ok) throw new Error('RP Final melebihi RP Max (Loan + Accrued), file ditolak: ' + r.errors.join('; '));
+      if (!r.ok) throw new Error('RP Final melebihi RP Max (Total Loan OP), file ditolak: ' + r.errors.join('; '));
       S.st = r.state; audit(); recompute(); S.rpFile = { name: f.name, n: map.size, notPei: r.notPei.length };
       S.msg = { t: `✅ RP Final dimuat — ${map.size} SID. Nasabah yang tidak ada di file dianggap RP Final = 0.` + (r.changed.length ? ` ${r.changed.length} nilai RP berbeda dari Langkah 2 dan memakai isi file.` : '') + (S.rpFile.notPei ? ` ${S.rpFile.notPei} SID di file bukan nasabah PEI (diabaikan).` : '') };
     } catch (er) { S.rpFile = null; S.msg = { er: 1, t: '❌ Gagal membaca file RP Final: ' + er.message }; }
